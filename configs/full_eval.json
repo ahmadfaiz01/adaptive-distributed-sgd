@@ -1,0 +1,36 @@
+{
+  "strategies": ["sync_ps", "async_ps_ssp", "ring_allreduce", "adaptive"],
+  "worker_counts": [1, 2, 4, 8, 12],
+  "repeats": 5,
+  "steps": 60,
+  "batch_size": 32,
+  "learning_rate": 0.20,
+  "n_samples": 6000,
+  "n_features": 32,
+  "n_classes": 3,
+  "seed": 457226,
+  "staleness_bound": 3,
+  "target_loss": 0.70,
+  "wall_time_scale": 0.02,
+  "output_dir": "results/raw",
+  "network": {
+    "bandwidth_mbps": 1000.0,
+    "latency_ms": 1.0,
+    "jitter_ms": 0.2,
+    "payload_scale": 4000.0
+  },
+  "adaptive": {
+    "monitor_window": 10,
+    "high_cv_threshold": 0.30,
+    "low_cv_threshold": 0.15,
+    "cooldown_steps": 10
+  },
+  "workloads": [
+    {"name": "homogeneous_high_bw"},
+    {"name": "homogeneous_limited_bw", "limited_bandwidth": true},
+    {"name": "heterogeneous_high_bw", "heterogeneous": true},
+    {"name": "heterogeneous_limited_bw", "heterogeneous": true, "limited_bandwidth": true},
+    {"name": "dynamic_mixed", "dynamic": true, "limited_bandwidth": true},
+    {"name": "worker_crash", "failure": true, "heterogeneous": true, "crash_worker": 0, "crash_step": 25}
+  ]
+}
