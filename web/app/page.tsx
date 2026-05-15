@@ -6,10 +6,10 @@ import { useEffect, useMemo, useState } from "react";
 type Row = Record<string, string>;
 
 const strategyColors: Record<string, string> = {
-  sync_ps: "#2f6bff",
-  async_ps_ssp: "#13996f",
-  ring_allreduce: "#d94841",
-  adaptive: "#7a4df3"
+  sync_ps: "#6b7280",
+  async_ps_ssp: "#374151",
+  ring_allreduce: "#ef4444",
+  adaptive: "#b91c1c"
 };
 
 const strategyNames: Record<string, string> = {
@@ -62,7 +62,7 @@ function fmt(value: number, digits = 2) {
 }
 
 function modeLabel(mode: string) {
-  return mode === "ps" ? "Parameter Server" : "Ring AllReduce";
+  return mode === "ps" ? "Parameter Server" : "Ring";
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -73,7 +73,7 @@ function WorkerNode({ id, active, slow }: { id: number; active: boolean; slow: b
   return (
     <div className={`worker ${active ? "active" : ""} ${slow ? "slow" : ""}`}>
       <span>W{id + 1}</span>
-      <small>{slow ? "straggler" : "ready"}</small>
+      <small>{slow ? "slow" : "ready"}</small>
     </div>
   );
 }
@@ -119,23 +119,23 @@ function TimelineChart({ rows, cursor }: { rows: Row[]; cursor: number }) {
   return (
     <svg className="line-chart" viewBox="0 0 700 260" role="img" aria-label="Animated adaptive iteration timeline">
       {[0, 1, 2].map((tick) => (
-        <line key={tick} x1="44" x2="660" y1={225 - tick * 70} y2={225 - tick * 70} stroke="#e2e8f0" />
+        <line key={tick} x1="44" x2="660" y1={225 - tick * 70} y2={225 - tick * 70} stroke="#e4e4e7" />
       ))}
-      <polyline points={points} fill="none" stroke="#7a4df3" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={points} fill="none" stroke="#dc2626" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       {visible
         .filter((row) => row.mode_switched === "1")
         .map((row) => {
           const x = 44 + (n(row, "step") / maxStep) * 612;
           return (
             <g key={`${row.step}-${row.mode}`}>
-              <line x1={x} x2={x} y1="34" y2="225" stroke="#101828" strokeDasharray="5 6" />
-              <text x={x + 8} y="48" fontSize="12" fill="#101828">
+              <line x1={x} x2={x} y1="34" y2="225" stroke="#27272a" strokeDasharray="5 6" />
+              <text x={x + 8} y="48" fontSize="12" fill="#27272a">
                 switch to {row.mode}
               </text>
             </g>
           );
         })}
-      <text x="350" y="248" textAnchor="middle" fontSize="12" fill="#667085">
+      <text x="350" y="248" textAnchor="middle" fontSize="12" fill="#71717a">
         training step
       </text>
     </svg>
@@ -254,7 +254,7 @@ export default function Dashboard() {
           <section className="sim-card">
             <div className="card-head">
               <div>
-                <h2>Live Simulation</h2>
+                <h2>Simulation</h2>
                 <p>{workloadNames[workload]} workload with {workers} worker processes.</p>
               </div>
               <div className={`mode ${currentMode}`}>
@@ -278,11 +278,11 @@ export default function Dashboard() {
 
             <div className="stats-strip">
               <div>
-                <span>Worker variation</span>
+                <span>Variation</span>
                 <strong>{fmt(currentCv, 3)}</strong>
               </div>
               <div>
-                <span>Adaptive time</span>
+                <span>Adaptive</span>
                 <strong>{fmt(n(adaptive, "mean_iteration_time_s"), 3)}s</strong>
               </div>
               <div>
@@ -290,25 +290,25 @@ export default function Dashboard() {
                 <strong>{bestStatic ? strategyNames[bestStatic.strategy] : "n/a"}</strong>
               </div>
               <div>
-                <span>C-6 improvement</span>
+                <span>Improvement</span>
                 <strong>{improvement ? `${fmt(n(improvement, "adaptive_improvement_percent"), 1)}%` : "n/a"}</strong>
               </div>
             </div>
           </section>
 
           <aside className="insight-card">
-            <h2>What To Say</h2>
+            <h2>Demo Notes</h2>
             <div className="talking-point">
               <Zap size={18} />
-              <p>Ring is fast when workers are balanced, but it waits at a barrier when stragglers appear.</p>
+              <p>Ring is strong when workers finish together.</p>
             </div>
             <div className="talking-point">
               <Server size={18} />
-              <p>Parameter Server tolerates slow workers better, but centralizes communication.</p>
+              <p>Parameter Server handles slow workers better.</p>
             </div>
             <div className="talking-point">
               <CheckCircle2 size={18} />
-              <p>Adaptive mode switches at runtime, giving measurable improvement in dynamic workloads.</p>
+              <p>Adaptive switches modes during runtime.</p>
             </div>
           </aside>
         </div>
@@ -316,7 +316,7 @@ export default function Dashboard() {
         <div className="charts">
           <section className="panel">
             <div className="card-head compact">
-              <h2>Iteration Time Comparison</h2>
+              <h2>Runtime Comparison</h2>
               <p>Lower is better.</p>
             </div>
             <StrategyBars rows={filteredSummary} />
@@ -325,7 +325,7 @@ export default function Dashboard() {
           <section className="panel">
             <div className="card-head compact">
               <h2>Adaptive Timeline</h2>
-              <p>Switch markers appear during playback.</p>
+              <p>Switches appear during playback.</p>
             </div>
             <TimelineChart rows={filteredSteps} cursor={cursor} />
           </section>
@@ -334,7 +334,7 @@ export default function Dashboard() {
         <section className="panel final-panel">
           <div>
             <h2>Failure Check</h2>
-            <p>In the worker-crash workload, Ring fails because the ring breaks; PS and adaptive continue degraded.</p>
+            <p>Ring fails after a crash. PS and adaptive continue in degraded mode.</p>
           </div>
           <div className="failure-grid">
             {failureRows.map((row) => (
@@ -346,7 +346,7 @@ export default function Dashboard() {
           </div>
           <div className="warning">
             <AlertTriangle size={18} />
-            C-6 claim: adaptive improves dynamic mixed workload by switching instead of staying static.
+            C-6 claim: adaptive improves dynamic workloads by switching instead of staying static.
           </div>
         </section>
       </section>
