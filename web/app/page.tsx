@@ -1,40 +1,45 @@
 "use client";
 
-import { Activity, BarChart3, GitBranch, Play, RefreshCcw, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Pause, Play, RotateCcw, Server, Share2, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 type Row = Record<string, string>;
 
 const strategyColors: Record<string, string> = {
-  sync_ps: "#2563eb",
-  async_ps_ssp: "#0f9f6e",
-  ring_allreduce: "#dc2626",
-  adaptive: "#7c3aed"
+  sync_ps: "#2f6bff",
+  async_ps_ssp: "#13996f",
+  ring_allreduce: "#d94841",
+  adaptive: "#7a4df3"
 };
 
 const strategyNames: Record<string, string> = {
-  sync_ps: "Sync Parameter Server",
-  async_ps_ssp: "Async/SSP Parameter Server",
+  sync_ps: "Sync PS",
+  async_ps_ssp: "Async PS",
   ring_allreduce: "Ring AllReduce",
   adaptive: "Adaptive"
 };
 
 const workloadNames: Record<string, string> = {
-  homogeneous_high_bw: "Homogeneous, high bandwidth",
-  homogeneous_limited_bw: "Homogeneous, limited bandwidth",
-  heterogeneous_high_bw: "Heterogeneous, high bandwidth",
-  heterogeneous_limited_bw: "Heterogeneous, limited bandwidth",
-  dynamic_mixed: "Dynamic mixed",
-  worker_crash: "Worker crash"
+  homogeneous_high_bw: "Homogeneous",
+  heterogeneous_high_bw: "Heterogeneous",
+  dynamic_mixed: "Dynamic Mixed",
+  worker_crash: "Worker Crash"
 };
 
-const metricLabels: Record<string, string> = {
-  mean_iteration_time_s: "Mean iteration time",
-  p95_iteration_time_s: "P95 iteration time",
-  throughput_samples_s: "Throughput",
-  comm_fraction: "Communication fraction",
-  straggler_impact_rate: "Straggler impact"
-};
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const char of line) {
+    if (char === '"') quoted = !quoted;
+    else if (char === "," && !quoted) {
+      out.push(current);
+      current = "";
+    } else current += char;
+  }
+  out.push(current);
+  return out;
+}
 
 function parseCsv(text: string): Row[] {
   const lines = text.trim().split(/\r?\n/);
@@ -46,116 +51,95 @@ function parseCsv(text: string): Row[] {
   });
 }
 
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      out.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  out.push(current);
-  return out;
-}
-
-function n(row: Row, key: string): number {
-  const value = Number(row[key]);
+function n(row: Row | undefined, key: string): number {
+  const value = Number(row?.[key]);
   return Number.isFinite(value) ? value : 0;
 }
 
-function fmt(value: number, unit = "") {
+function fmt(value: number, digits = 2) {
   if (!Number.isFinite(value)) return "n/a";
-  if (Math.abs(value) >= 1000) return `${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}${unit}`;
-  if (Math.abs(value) >= 10) return `${value.toFixed(2)}${unit}`;
-  return `${value.toFixed(3)}${unit}`;
+  return value.toFixed(digits);
 }
 
-function unique(rows: Row[], key: string) {
-  return Array.from(new Set(rows.map((row) => row[key]).filter(Boolean)));
+function modeLabel(mode: string) {
+  return mode === "ps" ? "Parameter Server" : "Ring AllReduce";
 }
 
-function BarComparison({ rows, metric }: { rows: Row[]; metric: string }) {
-  const max = Math.max(...rows.map((row) => n(row, metric)), 0.001);
+function StatusBadge({ status }: { status: string }) {
+  return <span className={`status ${status}`}>{status || "n/a"}</span>;
+}
+
+function WorkerNode({ id, active, slow }: { id: number; active: boolean; slow: boolean }) {
   return (
-    <div className="chart" role="img" aria-label="Strategy comparison bar chart">
-      <svg viewBox="0 0 760 310" width="100%" height="100%">
-        {[0, 1, 2, 3].map((tick) => (
-          <line key={tick} x1="70" x2="730" y1={260 - tick * 60} y2={260 - tick * 60} stroke="#e5e7eb" />
-        ))}
-        {rows.map((row, index) => {
-          const value = n(row, metric);
-          const height = Math.max(4, (value / max) * 205);
-          const x = 95 + index * 155;
-          const y = 260 - height;
-          const color = strategyColors[row.strategy] ?? "#64748b";
+    <div className={`worker ${active ? "active" : ""} ${slow ? "slow" : ""}`}>
+      <span>W{id + 1}</span>
+      <small>{slow ? "straggler" : "ready"}</small>
+    </div>
+  );
+}
+
+function StrategyBars({ rows }: { rows: Row[] }) {
+  const valid = rows.filter((row) => row.status !== "failed");
+  const max = Math.max(...valid.map((row) => n(row, "mean_iteration_time_s")), 0.001);
+  return (
+    <div className="bars">
+      {rows.map((row) => {
+        const value = n(row, "mean_iteration_time_s");
+        const width = row.status === "failed" ? 14 : Math.max(10, (value / max) * 100);
+        return (
+          <div className="bar-row" key={row.strategy}>
+            <div className="bar-label">
+              <span className="dot" style={{ background: strategyColors[row.strategy] }} />
+              {strategyNames[row.strategy]}
+            </div>
+            <div className="bar-track">
+              <div className="bar-fill" style={{ width: `${width}%`, background: strategyColors[row.strategy] }} />
+            </div>
+            <strong>{row.status === "failed" ? "failed" : `${fmt(value, 3)}s`}</strong>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TimelineChart({ rows, cursor }: { rows: Row[]; cursor: number }) {
+  const valid = rows.filter((row) => row.strategy === "adaptive" && row.iteration_time_s);
+  const maxStep = Math.max(...valid.map((row) => n(row, "step")), 1);
+  const maxIter = Math.max(...valid.map((row) => n(row, "iteration_time_s")), 0.001);
+  const visible = valid.filter((row) => n(row, "step") <= cursor);
+  const points = visible
+    .map((row) => {
+      const x = 44 + (n(row, "step") / maxStep) * 612;
+      const y = 225 - (n(row, "iteration_time_s") / maxIter) * 170;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className="line-chart" viewBox="0 0 700 260" role="img" aria-label="Animated adaptive iteration timeline">
+      {[0, 1, 2].map((tick) => (
+        <line key={tick} x1="44" x2="660" y1={225 - tick * 70} y2={225 - tick * 70} stroke="#e2e8f0" />
+      ))}
+      <polyline points={points} fill="none" stroke="#7a4df3" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      {visible
+        .filter((row) => row.mode_switched === "1")
+        .map((row) => {
+          const x = 44 + (n(row, "step") / maxStep) * 612;
           return (
-            <g key={`${row.strategy}-${row.workers}`}>
-              <rect x={x} y={y} width="84" height={height} fill={color} rx="5" />
-              <text x={x + 42} y={y - 8} textAnchor="middle" fontSize="13" fill="#18202a">
-                {fmt(value)}
-              </text>
-              <text x={x + 42} y="287" textAnchor="middle" fontSize="12" fill="#647180">
-                {row.strategy.replace("_", " ")}
+            <g key={`${row.step}-${row.mode}`}>
+              <line x1={x} x2={x} y1="34" y2="225" stroke="#101828" strokeDasharray="5 6" />
+              <text x={x + 8} y="48" fontSize="12" fill="#101828">
+                switch to {row.mode}
               </text>
             </g>
           );
         })}
-        <text x="18" y="45" transform="rotate(-90 18 45)" fontSize="12" fill="#647180">
-          {metricLabels[metric]}
-        </text>
-      </svg>
-    </div>
+      <text x="350" y="248" textAnchor="middle" fontSize="12" fill="#667085">
+        training step
+      </text>
+    </svg>
   );
-}
-
-function AdaptiveTimeline({ rows }: { rows: Row[] }) {
-  const valid = rows.filter((row) => row.strategy === "adaptive" && row.iteration_time_s);
-  const maxStep = Math.max(...valid.map((row) => n(row, "step")), 1);
-  const maxIter = Math.max(...valid.map((row) => n(row, "iteration_time_s")), 0.001);
-  const points = valid
-    .map((row) => {
-      const x = 55 + (n(row, "step") / maxStep) * 660;
-      const y = 250 - (n(row, "iteration_time_s") / maxIter) * 205;
-      return `${x},${y}`;
-    })
-    .join(" ");
-  return (
-    <div className="chart" role="img" aria-label="Adaptive mode timeline">
-      <svg viewBox="0 0 760 310" width="100%" height="100%">
-        {[0, 1, 2, 3].map((tick) => (
-          <line key={tick} x1="55" x2="720" y1={250 - tick * 60} y2={250 - tick * 60} stroke="#e5e7eb" />
-        ))}
-        <polyline points={points} fill="none" stroke="#7c3aed" strokeWidth="3" />
-        {valid
-          .filter((row) => row.mode_switched === "1")
-          .map((row) => {
-            const x = 55 + (n(row, "step") / maxStep) * 660;
-            return (
-              <g key={`${row.workers}-${row.step}-${row.mode}`}>
-                <line x1={x} x2={x} y1="35" y2="252" stroke="#111827" strokeDasharray="5 5" />
-                <text x={x + 6} y="48" fontSize="12" fill="#111827">
-                  switch to {row.mode}
-                </text>
-              </g>
-            );
-          })}
-        <text x="380" y="292" textAnchor="middle" fontSize="12" fill="#647180">
-          training step
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-function StatusPill({ status }: { status: string }) {
-  return <span className={`status ${status}`}>{status || "n/a"}</span>;
 }
 
 export default function Dashboard() {
@@ -164,7 +148,8 @@ export default function Dashboard() {
   const [improvements, setImprovements] = useState<Row[]>([]);
   const [workload, setWorkload] = useState("dynamic_mixed");
   const [workers, setWorkers] = useState("4");
-  const [metric, setMetric] = useState("mean_iteration_time_s");
+  const [running, setRunning] = useState(false);
+  const [cursor, setCursor] = useState(0);
 
   useEffect(() => {
     Promise.all([
@@ -178,201 +163,192 @@ export default function Dashboard() {
     });
   }, []);
 
-  const workloads = useMemo(() => unique(summary, "workload"), [summary]);
-  const workerOptions = useMemo(() => unique(summary, "workers").sort((a, b) => Number(a) - Number(b)), [summary]);
-  const filteredSummary = useMemo(
-    () => summary.filter((row) => row.workload === workload && row.workers === workers),
-    [summary, workload, workers]
+  const workerOptions = useMemo(
+    () => Array.from(new Set(summary.map((row) => row.workers))).sort((a, b) => Number(a) - Number(b)),
+    [summary]
   );
-  const filteredSteps = useMemo(
-    () => steps.filter((row) => row.workload === workload && row.workers === workers && row.repeat === "0"),
-    [steps, workload, workers]
-  );
+  const relevantWorkloads = ["dynamic_mixed", "heterogeneous_high_bw", "homogeneous_high_bw", "worker_crash"];
+  const filteredSummary = summary.filter((row) => row.workload === workload && row.workers === workers);
+  const filteredSteps = steps.filter((row) => row.workload === workload && row.workers === workers && row.repeat === "0");
+  const adaptiveRows = filteredSteps.filter((row) => row.strategy === "adaptive" && row.iteration_time_s);
+  const maxStep = Math.max(...adaptiveRows.map((row) => n(row, "step")), 35);
+  const currentStep = adaptiveRows.find((row) => n(row, "step") === cursor) ?? adaptiveRows[adaptiveRows.length - 1];
+  const currentMode = currentStep?.mode ?? "ring";
+  const currentCv = n(currentStep, "worker_cv");
+  const improvement = improvements.find((row) => row.workload === workload && row.workers === workers);
   const adaptive = filteredSummary.find((row) => row.strategy === "adaptive");
   const bestStatic = filteredSummary
     .filter((row) => row.strategy !== "adaptive" && row.status !== "failed")
     .sort((a, b) => n(a, "mean_iteration_time_s") - n(b, "mean_iteration_time_s"))[0];
-  const improvement = improvements.find((row) => row.workload === workload && row.workers === workers);
-  const failureRows = summary.filter((row) => row.workload === "worker_crash");
+  const failureRows = summary.filter((row) => row.workload === "worker_crash" && row.workers === workers);
+  const isCrash = workload === "worker_crash" && cursor >= 18;
+  const slowStart = workload.includes("heterogeneous") || (workload === "dynamic_mixed" && cursor >= 15 && cursor < 30) || workload === "worker_crash";
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      setCursor((value) => {
+        if (value >= maxStep) {
+          setRunning(false);
+          return maxStep;
+        }
+        return value + 1;
+      });
+    }, 260);
+    return () => window.clearInterval(timer);
+  }, [running, maxStep]);
+
+  function reset() {
+    setRunning(false);
+    setCursor(0);
+  }
 
   return (
     <main className="page">
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <div className="brand-mark">SGD</div>
-            <div>
-              <p className="eyebrow">Parallel and Distributed Computing</p>
-              <h1>Adaptive Distributed SGD Dashboard</h1>
-            </div>
-          </div>
-          <div className="top-actions">
-            <span className="pill">Parameter Server</span>
-            <span className="pill">Ring AllReduce</span>
-            <span className="pill">Adaptive C-6</span>
-          </div>
-        </div>
-      </header>
-
-      <section className="shell">
-        <div className="controls">
-          <div className="control">
-            <label>Workload</label>
-            <select value={workload} onChange={(event) => setWorkload(event.target.value)}>
-              {workloads.map((item) => (
-                <option key={item} value={item}>
-                  {workloadNames[item] ?? item}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="control">
-            <label>Workers</label>
-            <select value={workers} onChange={(event) => setWorkers(event.target.value)}>
-              {workerOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item} worker processes
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="control">
-            <label>Metric</label>
-            <select value={metric} onChange={(event) => setMetric(event.target.value)}>
-              {Object.entries(metricLabels).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="control">
-            <label>Current comparison</label>
-            <strong>{workloadNames[workload] ?? workload}</strong>
-          </div>
-        </div>
-
-        <div className="grid three">
-          <div className="panel metric">
-            <h3>
-              <Activity size={16} /> Adaptive iteration time
-            </h3>
-            <div className="metric-value">{fmt(n(adaptive ?? {}, "mean_iteration_time_s"), "s")}</div>
-            <p className="muted">Lower is better. This is the main speed metric.</p>
-          </div>
-          <div className="panel metric">
-            <h3>
-              <BarChart3 size={16} /> Best static baseline
-            </h3>
-            <div className="metric-value">{bestStatic ? strategyNames[bestStatic.strategy] : "n/a"}</div>
-            <p className="muted">{bestStatic ? `${fmt(n(bestStatic, "mean_iteration_time_s"), "s")} mean iteration time` : "No static baseline available"}</p>
-          </div>
-          <div className="panel metric">
-            <h3>
-              <RefreshCcw size={16} /> C-6 improvement
-            </h3>
-            <div className="metric-value">{improvement ? fmt(n(improvement, "adaptive_improvement_percent"), "%") : "n/a"}</div>
-            <p className="muted">Positive means adaptive beat the best static strategy.</p>
-          </div>
-        </div>
-
-        <div className="grid two" style={{ marginTop: 16 }}>
-          <div className="panel">
-            <h2>
-              <SlidersHorizontal size={18} /> Strategy Comparison
-            </h2>
-            <BarComparison rows={filteredSummary} metric={metric} />
-            <div className="legend">
-              {Object.entries(strategyColors).map(([strategy, color]) => (
-                <span key={strategy}>
-                  <span className="dot" style={{ background: color }} />
-                  {strategyNames[strategy]}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>
-              <GitBranch size={18} /> Adaptive Timeline
-            </h2>
-            <AdaptiveTimeline rows={filteredSteps} />
-            <p className="explain">
-              Vertical dashed lines are mode switches. The controller watches worker-time variation and moves from Ring to PS when stragglers appear.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid two" style={{ marginTop: 16 }}>
-          <div className="panel">
-            <h2>
-              <ShieldAlert size={18} /> Failure Scenario
-            </h2>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Strategy</th>
-                    <th>Workers</th>
-                    <th>Status</th>
-                    <th>Steps</th>
-                    <th>Crash step</th>
-                    <th>Recovery</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {failureRows.map((row) => (
-                    <tr key={`${row.strategy}-${row.workers}`}>
-                      <td>{strategyNames[row.strategy] ?? row.strategy}</td>
-                      <td>{row.workers}</td>
-                      <td>
-                        <StatusPill status={row.status} />
-                      </td>
-                      <td>{row.steps_completed}</td>
-                      <td>{row.failure_step || "none"}</td>
-                      <td>{row.recovery_time_steps || "n/a"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>
-              <Play size={18} /> Demo Script
-            </h2>
-            <div className="timeline">
-              <div className="event">
-                <strong>1. Pick dynamic mixed</strong>
-                Show that adaptive beats the best static baseline by switching modes.
-              </div>
-              <div className="event">
-                <strong>2. Pick worker crash</strong>
-                Show Ring fails, while PS and adaptive continue degraded.
-              </div>
-              <div className="event">
-                <strong>3. Change the metric</strong>
-                Compare iteration time, throughput, communication fraction, and straggler impact.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel" style={{ marginTop: 16 }}>
-          <h2>What This Proves</h2>
-          <div className="compare">
-            <p className="explain">
-              <strong>Homogeneous</strong> means all workers have similar speed. Ring AllReduce is usually strong there because every worker reaches the barrier together.
-            </p>
-            <p className="explain">
-              <strong>Heterogeneous</strong> means workers differ in speed. A slow worker becomes a straggler, so synchronous Ring waits while PS-based methods tolerate the slowdown better.
-            </p>
-          </div>
-          <p className="explain">
-            The C-6 contribution is the adaptive controller: it changes synchronization strategy at runtime instead of choosing one static architecture before training starts.
+      <section className="hero">
+        <div>
+          <p className="eyebrow">Distributed SGD simulation</p>
+          <h1>Adaptive synchronization, visualized.</h1>
+          <p className="hero-copy">
+            Watch workers train, detect stragglers, switch between Ring AllReduce and Parameter Server, and compare the measured outcome.
           </p>
         </div>
+        <div className="hero-actions">
+          <button className="primary" onClick={() => setRunning((value) => !value)}>
+            {running ? <Pause size={18} /> : <Play size={18} />}
+            {running ? "Pause" : "Start Simulation"}
+          </button>
+          <button className="secondary" onClick={reset}>
+            <RotateCcw size={18} />
+            Reset
+          </button>
+        </div>
+      </section>
+
+      <section className="shell">
+        <div className="toolbar">
+          <label>
+            Workload
+            <select value={workload} onChange={(event) => { setWorkload(event.target.value); reset(); }}>
+              {relevantWorkloads.map((item) => (
+                <option key={item} value={item}>
+                  {workloadNames[item]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Scale
+            <select value={workers} onChange={(event) => { setWorkers(event.target.value); reset(); }}>
+              {workerOptions.map((item) => (
+                <option key={item} value={item}>
+                  {item} workers
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="step-pill">Step {cursor} / {maxStep}</div>
+        </div>
+
+        <div className="layout">
+          <section className="sim-card">
+            <div className="card-head">
+              <div>
+                <h2>Live Simulation</h2>
+                <p>{workloadNames[workload]} workload with {workers} worker processes.</p>
+              </div>
+              <div className={`mode ${currentMode}`}>
+                {currentMode === "ps" ? <Server size={18} /> : <Share2 size={18} />}
+                {modeLabel(currentMode)}
+              </div>
+            </div>
+
+            <div className={`network-scene ${currentMode}`}>
+              <div className="server-node">
+                <Server size={28} />
+                <span>PS</span>
+              </div>
+              <div className="worker-grid">
+                {Array.from({ length: Number(workers) || 4 }).map((_, index) => (
+                  <WorkerNode key={index} id={index} active={!isCrash || index !== 0} slow={slowStart && index >= Math.max(1, Number(workers) - 1)} />
+                ))}
+              </div>
+              <div className="ring-line" />
+            </div>
+
+            <div className="stats-strip">
+              <div>
+                <span>Worker variation</span>
+                <strong>{fmt(currentCv, 3)}</strong>
+              </div>
+              <div>
+                <span>Adaptive time</span>
+                <strong>{fmt(n(adaptive, "mean_iteration_time_s"), 3)}s</strong>
+              </div>
+              <div>
+                <span>Best static</span>
+                <strong>{bestStatic ? strategyNames[bestStatic.strategy] : "n/a"}</strong>
+              </div>
+              <div>
+                <span>C-6 improvement</span>
+                <strong>{improvement ? `${fmt(n(improvement, "adaptive_improvement_percent"), 1)}%` : "n/a"}</strong>
+              </div>
+            </div>
+          </section>
+
+          <aside className="insight-card">
+            <h2>What To Say</h2>
+            <div className="talking-point">
+              <Zap size={18} />
+              <p>Ring is fast when workers are balanced, but it waits at a barrier when stragglers appear.</p>
+            </div>
+            <div className="talking-point">
+              <Server size={18} />
+              <p>Parameter Server tolerates slow workers better, but centralizes communication.</p>
+            </div>
+            <div className="talking-point">
+              <CheckCircle2 size={18} />
+              <p>Adaptive mode switches at runtime, giving measurable improvement in dynamic workloads.</p>
+            </div>
+          </aside>
+        </div>
+
+        <div className="charts">
+          <section className="panel">
+            <div className="card-head compact">
+              <h2>Iteration Time Comparison</h2>
+              <p>Lower is better.</p>
+            </div>
+            <StrategyBars rows={filteredSummary} />
+          </section>
+
+          <section className="panel">
+            <div className="card-head compact">
+              <h2>Adaptive Timeline</h2>
+              <p>Switch markers appear during playback.</p>
+            </div>
+            <TimelineChart rows={filteredSteps} cursor={cursor} />
+          </section>
+        </div>
+
+        <section className="panel final-panel">
+          <div>
+            <h2>Failure Check</h2>
+            <p>In the worker-crash workload, Ring fails because the ring breaks; PS and adaptive continue degraded.</p>
+          </div>
+          <div className="failure-grid">
+            {failureRows.map((row) => (
+              <div className="failure-item" key={row.strategy}>
+                <span>{strategyNames[row.strategy]}</span>
+                <StatusBadge status={row.status} />
+              </div>
+            ))}
+          </div>
+          <div className="warning">
+            <AlertTriangle size={18} />
+            C-6 claim: adaptive improves dynamic mixed workload by switching instead of staying static.
+          </div>
+        </section>
       </section>
     </main>
   );
